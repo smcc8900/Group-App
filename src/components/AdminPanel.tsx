@@ -179,7 +179,7 @@ function AdminPanel() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (
-      login.username === ADMIN_USERNAME &&
+      login.username.toLowerCase() === ADMIN_USERNAME &&
       login.password === ADMIN_PASSWORD
     ) {
       setIsAdmin(true);

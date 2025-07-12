@@ -37,7 +37,7 @@ function App() {
 
   return (
     <div>
-      {/* Install App Button */}
+      {/* Install App Button for Chrome/Android */}
       {showInstall && (
         <button
           style={{
@@ -59,8 +59,8 @@ function App() {
           Install App
         </button>
       )}
-      {/* iOS Install Instructions */}
-      {isIOS && !showInstall && (
+      {/* iOS Install Instructions - Always show on iOS */}
+      {isIOS && (
         <div
           style={{
             position: 'fixed',
@@ -68,16 +68,21 @@ function App() {
             right: 16,
             zIndex: 2000,
             background: '#fff',
-            border: '1px solid #ccc',
+            border: '2px solid #1976d2',
             borderRadius: 8,
             padding: '12px 16px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-            maxWidth: '250px',
-            fontSize: '12px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            maxWidth: '280px',
+            fontSize: '13px',
+            fontWeight: 'bold',
           }}
         >
-          <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>📱 Install App</div>
-          <div>Tap <strong>Share</strong> → <strong>Add to Home Screen</strong></div>
+          <div style={{ color: '#1976d2', marginBottom: '6px', fontSize: '14px' }}>📱 Install App</div>
+          <div style={{ color: '#333' }}>
+            1. Tap <strong>Share</strong> button<br/>
+            2. Tap <strong>Add to Home Screen</strong><br/>
+            3. Tap <strong>Add</strong>
+          </div>
         </div>
       )}
       <MainRoutes />

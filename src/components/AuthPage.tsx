@@ -42,8 +42,8 @@ function AuthPage() {
     setError('');
     try {
       setLoading(true);
-      // Find member by username
-      const q = query(collection(db, 'members'), where('username', '==', username));
+      // Find member by username (case-insensitive)
+      const q = query(collection(db, 'members'), where('username', '==', username.toLowerCase()));
       const snap = await getDocs(q);
       if (snap.empty) {
         setError('Invalid username or password');
