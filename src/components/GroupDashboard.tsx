@@ -42,20 +42,29 @@ function GroupDashboard() {
         // Fetch all members
         const membersSnap = await getDocs(collection(db, 'members'));
         const members = membersSnap.docs.map(doc => doc.data());
+        console.log('All members:', members);
         // Fetch all paid contributions
         const contribSnap = await getDocs(query(collection(db, 'contribution'), where('status', '==', 'paid')));
         const contributions = contribSnap.docs.map(doc => doc.data());
+        console.log('All paid contributions:', contributions);
         // Calculate member-wise totals
         const memberTotals: Record<string, number> = {};
         contributions.forEach(c => {
-          if (!memberTotals[c.userEmail]) memberTotals[c.userEmail] = 0;
-          memberTotals[c.userEmail] += Number(c.amount);
+          // Use username instead of userEmail for consistency
+          const key = c.username || c.userEmail;
+          if (!memberTotals[key]) memberTotals[key] = 0;
+          memberTotals[key] += Number(c.amount);
         });
+        
         // Map to member names for pie chart
         const memberPie = members.map(m => ({
           name: m.name,
           value: memberTotals[m.username] || 0,
-        }));
+        })).filter(item => item.value > 0); // Only show members with contributions
+        
+        console.log('Member totals:', memberTotals);
+        console.log('Member pie data:', memberPie);
+        console.log('Total contributions found:', contributions.length);
         setMemberData(memberPie);
         // Calculate monthly totals for bar chart
         const monthTotals: Record<string, number> = {};
@@ -138,25 +147,43 @@ function GroupDashboard() {
             </Paper>
             <Paper sx={{ p: 3, boxShadow: 4, flex: '1 1 300px', minWidth: 280 }}>
               <Typography variant="h6" gutterBottom>Member Contribution Share</Typography>
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={memberData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={90}
-                    label
-                  >
-                    {memberData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Legend />
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+              {memberData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={memberData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={90}
+                      label
+                    >
+                      {memberData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Legend />
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <Box sx={{ 
+                  height: 300, 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  flexDirection: 'column',
+                  color: '#666'
+                }}>
+                  <Typography variant="h6" color="text.secondary">
+                    No contribution data available
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Members need to make payments to see the pie chart
+                  </Typography>
+                </Box>
+              )}
             </Paper>
           </Box>
           <Box sx={{ mt: 5 }}>

@@ -55,13 +55,13 @@ function App() {
 
   return (
     <div>
-      {/* Install App Button for Chrome/Android - Positioned on left side */}
+      {/* Install App Button for Chrome/Android - Positioned in bottom-right to avoid overlap */}
       {showInstall && (
         <button
           style={{
             position: 'fixed',
-            top: 16,
-            left: 16,
+            bottom: 16,
+            right: 16,
             zIndex: 2000,
             background: '#1976d2',
             color: '#fff',
@@ -77,13 +77,13 @@ function App() {
           Install App
         </button>
       )}
-      {/* iOS Install Instructions - Positioned on left side */}
+      {/* iOS Install Instructions - Positioned in bottom-right to avoid overlap */}
       {isIOS && (
         <div
           style={{
             position: 'fixed',
-            top: 16,
-            left: 16,
+            bottom: 16,
+            right: 16,
             zIndex: 2000,
             background: '#fff',
             border: '2px solid #1976d2',
