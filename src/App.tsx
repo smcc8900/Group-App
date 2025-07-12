@@ -6,11 +6,17 @@ function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstall, setShowInstall] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
     // Check if device is iOS
     const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     setIsIOS(iOS);
+
+    // Check if app is already installed (standalone mode)
+    const standalone = window.matchMedia('(display-mode: standalone)').matches || 
+                      (window.navigator as any).standalone === true;
+    setIsStandalone(standalone);
 
     const handler = (e: any) => {
       e.preventDefault();
@@ -19,7 +25,10 @@ function App() {
     };
     window.addEventListener('beforeinstallprompt', handler);
     // Hide button if app is installed
-    window.addEventListener('appinstalled', () => setShowInstall(false));
+    window.addEventListener('appinstalled', () => {
+      setShowInstall(false);
+      setIsStandalone(true);
+    });
     return () => {
       window.removeEventListener('beforeinstallprompt', handler);
     };
@@ -35,15 +44,24 @@ function App() {
     }
   };
 
+  // Don't show install buttons if app is already installed
+  if (isStandalone) {
+    return (
+      <div>
+        <MainRoutes />
+      </div>
+    );
+  }
+
   return (
     <div>
-      {/* Install App Button for Chrome/Android */}
+      {/* Install App Button for Chrome/Android - Positioned on left side */}
       {showInstall && (
         <button
           style={{
             position: 'fixed',
             top: 16,
-            right: 16,
+            left: 16,
             zIndex: 2000,
             background: '#1976d2',
             color: '#fff',
@@ -59,13 +77,13 @@ function App() {
           Install App
         </button>
       )}
-      {/* iOS Install Instructions - Always show on iOS */}
+      {/* iOS Install Instructions - Positioned on left side */}
       {isIOS && (
         <div
           style={{
             position: 'fixed',
             top: 16,
-            right: 16,
+            left: 16,
             zIndex: 2000,
             background: '#fff',
             border: '2px solid #1976d2',
