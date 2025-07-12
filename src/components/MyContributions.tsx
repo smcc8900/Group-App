@@ -498,12 +498,33 @@ function MyContributions() {
               <QRCodeSVG value={getUpiQrString(paymentSettings.upiId, thisMonth?.amount ?? defaultAmount)} size={200} />
               <Box sx={{ mt: 3 }}>
                 <Typography variant="subtitle2" sx={{ mb: 1 }}>Upload Payment Screenshot (required)</Typography>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={e => setPaymentScreenshot(e.target.files?.[0] || null)}
-                  style={{ marginBottom: 8 }}
-                />
+                <Box sx={{ 
+                  border: '2px dashed #ccc', 
+                  borderRadius: 2, 
+                  p: 2, 
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  '&:hover': { borderColor: '#1976d2' }
+                }}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={e => setPaymentScreenshot(e.target.files?.[0] || null)}
+                    style={{ 
+                      display: 'none'
+                    }}
+                    id="payment-screenshot-input"
+                  />
+                  <label htmlFor="payment-screenshot-input" style={{ cursor: 'pointer', display: 'block' }}>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      {paymentScreenshot ? `Selected: ${paymentScreenshot.name}` : '📷 Tap to select or take photo'}
+                    </Typography>
+                    <Button variant="outlined" component="span">
+                      Choose File
+                    </Button>
+                  </label>
+                </Box>
                 {paymentError && <Alert severity="error">{paymentError}</Alert>}
               </Box>
             </>

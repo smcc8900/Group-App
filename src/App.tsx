@@ -5,8 +5,13 @@ import './App.css';
 function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstall, setShowInstall] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
+    // Check if device is iOS
+    const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    setIsIOS(iOS);
+
     const handler = (e: any) => {
       e.preventDefault();
       setDeferredPrompt(e);
@@ -54,7 +59,28 @@ function App() {
           Install App
         </button>
       )}
-      <MainRoutes />;
+      {/* iOS Install Instructions */}
+      {isIOS && !showInstall && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 16,
+            right: 16,
+            zIndex: 2000,
+            background: '#fff',
+            border: '1px solid #ccc',
+            borderRadius: 8,
+            padding: '12px 16px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            maxWidth: '250px',
+            fontSize: '12px',
+          }}
+        >
+          <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>📱 Install App</div>
+          <div>Tap <strong>Share</strong> → <strong>Add to Home Screen</strong></div>
+        </div>
+      )}
+      <MainRoutes />
     </div>
   );
 }
