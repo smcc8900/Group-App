@@ -42,30 +42,51 @@ function AuthPage() {
     setError('');
     try {
       setLoading(true);
-      // Find member by username (case-insensitive)
-      const q = query(collection(db, 'members'), where('username', '==', username.toLowerCase()));
-      const snap = await getDocs(q);
+      
+      // Get all members and find by username (case-insensitive)
+      const membersQuery = query(collection(db, 'members'));
+      const snap = await getDocs(membersQuery);
+      
       if (snap.empty) {
         setError('Invalid username or password');
         return;
       }
-      const member = snap.docs[0].data();
+      
+      // Find member with case-insensitive username match
+      const memberDoc = snap.docs.find(doc => {
+        const memberData = doc.data();
+        return memberData.username.toLowerCase() === username.toLowerCase();
+      });
+      
+      if (!memberDoc) {
+        setError('Invalid username or password');
+        return;
+      }
+      
+      const member = memberDoc.data();
+      
       if (member.password !== password) {
         setError('Invalid username or password');
         return;
       }
+      
       if (member.mustChangePassword) {
-        setMustChange({ id: snap.docs[0].id, member });
+        setMustChange({ id: memberDoc.id, member });
         return;
       }
+      
       // Store member info in localStorage/session
-      localStorage.setItem('member', JSON.stringify({ id: snap.docs[0].id, ...member }));
+      localStorage.setItem('member', JSON.stringify({ id: memberDoc.id, ...member }));
+      
       // Fetch and store latest payment settings
       await fetchAndStorePaymentSettings();
+      
       // Fetch and store latest group info
       await fetchAndStoreGroupInfo();
+      
       navigate('/my-contributions');
     } catch (err: any) {
+      console.error('Login error:', err);
       setError('Login failed');
     } finally {
       setLoading(false);

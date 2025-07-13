@@ -8,6 +8,10 @@ import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import Backdrop from '@mui/material/Backdrop';
 import { PulseLoader } from 'react-spinners';
+import { createPaymentApprovalNotification, createPaymentRejectionNotification } from '../utils/notifications';
+import { sendPaymentApprovalEmail, sendPaymentRejectionEmail } from '../utils/emailService';
+import NotificationCenter from './NotificationCenter';
+import EmailJSConfig from './EmailJSConfig';
 
 type MaybeDeleted<T> = T & { deleted?: boolean; active?: boolean };
 
@@ -39,15 +43,26 @@ function AdminPanel() {
   const [paymentRequests, setPaymentRequests] = useState<any[]>([]);
   const [paymentRequestsLoading, setPaymentRequestsLoading] = useState(true);
   const [paymentRequestsError, setPaymentRequestsError] = useState('');
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [rejectionDialogOpen, setRejectionDialogOpen] = useState(false);
+  const [pendingRejectionId, setPendingRejectionId] = useState<string | null>(null);
+  const [emailSendingStatus, setEmailSendingStatus] = useState<{[key: string]: 'sending' | 'sent' | 'error'}>({});
 
   // Group management state
   const [group, setGroup] = useState<any | null>(null);
-  const [groupForm, setGroupForm] = useState({ name: '', baseAmount: '', fineRules: [], previousContribution: '' });
-  const [groupFormTouched, setGroupFormTouched] = useState({ name: false, baseAmount: false, previousContribution: false });
+  const [groupForm, setGroupForm] = useState({ name: '', baseAmount: '', email: '', fineRules: [], previousContribution: '' });
+  const [groupFormTouched, setGroupFormTouched] = useState({ name: false, baseAmount: false, email: false, previousContribution: false });
+  
+  // Email validation function
+  const isValidEmail = (email: string) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+  
   // For group creation
-  const isCreateGroupFormValid = groupForm.name.trim() && groupForm.baseAmount;
+  const isCreateGroupFormValid = groupForm.name.trim() && groupForm.baseAmount && isValidEmail(groupForm.email);
   // For group edit dialog (if separate state is used, otherwise reuse groupForm)
-  const isEditGroupFormValid = groupForm.name.trim() && groupForm.baseAmount;
+  const isEditGroupFormValid = groupForm.name.trim() && groupForm.baseAmount && isValidEmail(groupForm.email);
 
   // Fine rules state for group form
   const [fineRules, setFineRules] = useState<{fromDate: string, toDate: string, amount: string}[]>([]);
@@ -213,12 +228,17 @@ function AdminPanel() {
   };
 
   // Handle accept/reject
-  const handlePaymentAction = async (id: string, action: 'accepted' | 'rejected') => {
+  const handlePaymentAction = async (id: string, action: 'accepted' | 'rejected', reason?: string) => {
     await updateDoc(doc(db, 'payment_requests', id), { status: action });
+    
+    // Find the payment request
+    const req = paymentRequests.find(r => r.id === id);
+    if (!req) return;
+
+    // Set email sending status
+    setEmailSendingStatus(prev => ({ ...prev, [id]: 'sending' }));
+
     if (action === 'accepted') {
-      // Find the payment request
-      const req = paymentRequests.find(r => r.id === id);
-      if (!req) return;
       // Check if contribution already exists for this user/month
       const contribQuery = query(collection(db, 'contribution'), where('username', '==', req.username), where('month', '==', req.month));
       const snap = await getDocs(contribQuery);
@@ -241,8 +261,93 @@ function AdminPanel() {
           paymentID: req.paymentID,
         });
       }
+
+      // Send approval notification to user
+      try {
+        await createPaymentApprovalNotification(
+          req.username, // userId (using username as userId for now)
+          req.username,
+          req.paymentID || id,
+          req.month,
+          req.amount,
+          'admin'
+        );
+      } catch (error) {
+        console.error('Error sending approval notification:', error);
+      }
+
+      // Send approval email with receipt
+      try {
+        const groupEmail = group?.email || 'no-reply@example.com';
+        await sendPaymentApprovalEmail({
+          username: req.username,
+          userEmail: req.username, // to email
+          fromEmail: groupEmail,   // from email
+          paymentId: req.paymentID || id,
+          month: req.month,
+          amount: req.amount,
+          adminUsername: 'admin',
+          status: 'approved'
+        });
+        setEmailSendingStatus(prev => ({ ...prev, [id]: 'sent' }));
+      } catch (error) {
+        console.error('Error sending approval email:', error);
+        setEmailSendingStatus(prev => ({ ...prev, [id]: 'error' }));
+      }
+    } else if (action === 'rejected') {
+      // Send rejection notification to user
+      try {
+        await createPaymentRejectionNotification(
+          req.username, // userId (using username as userId for now)
+          req.username,
+          req.paymentID || id,
+          req.month,
+          req.amount,
+          'admin',
+          reason
+        );
+      } catch (error) {
+        console.error('Error sending rejection notification:', error);
+      }
+
+      // Send rejection email
+      try {
+        const groupEmail = group?.email || 'no-reply@example.com';
+        await sendPaymentRejectionEmail({
+          username: req.username,
+          userEmail: req.username, // to email
+          fromEmail: groupEmail,   // from email
+          paymentId: req.paymentID || id,
+          month: req.month,
+          amount: req.amount,
+          adminUsername: 'admin',
+          status: 'rejected',
+          reason
+        });
+        setEmailSendingStatus(prev => ({ ...prev, [id]: 'sent' }));
+      } catch (error) {
+        console.error('Error sending rejection email:', error);
+        setEmailSendingStatus(prev => ({ ...prev, [id]: 'error' }));
+      }
     }
+    
     // Note: Deleting a payment request does NOT affect the paid state, which is always determined from the contribution record.
+  };
+
+  // Handle rejection with reason dialog
+  const handleRejectWithReason = (id: string) => {
+    setPendingRejectionId(id);
+    setRejectionDialogOpen(true);
+  };
+
+  // Confirm rejection with reason
+  const handleConfirmRejection = async () => {
+    if (pendingRejectionId) {
+      await handlePaymentAction(pendingRejectionId, 'rejected', rejectionReason);
+      setRejectionDialogOpen(false);
+      setPendingRejectionId(null);
+      setRejectionReason('');
+    }
   };
 
   const handleCreateGroup = async () => {
@@ -250,13 +355,14 @@ function AdminPanel() {
     await addDoc(collection(db, 'groups'), {
       name: groupForm.name,
       baseAmount: Number(groupForm.baseAmount),
+      email: groupForm.email,
       fineRules: fineRules.filter(r => r.fromDate && r.toDate && r.amount),
       previousContribution: groupForm.previousContribution ? Number(groupForm.previousContribution) : 0,
       createdAt: new Date().toISOString(),
     });
-    setGroupForm({ name: '', baseAmount: '', fineRules: [], previousContribution: '' });
+    setGroupForm({ name: '', baseAmount: '', email: '', fineRules: [], previousContribution: '' });
     setFineRules([]);
-    setGroupFormTouched({ name: false, baseAmount: false, previousContribution: false });
+    setGroupFormTouched({ name: false, baseAmount: false, email: false, previousContribution: false });
   };
 
   const handleAddMember = async () => {
@@ -333,8 +439,16 @@ function AdminPanel() {
       <Container maxWidth="md" sx={{ mt: 4 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h4" gutterBottom>Admin Panel</Typography>
-          <Button variant="outlined" color="error" onClick={handleLogout}>Logout</Button>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <NotificationCenter userId="admin" username="admin" />
+            <Button variant="outlined" color="info" onClick={() => window.open('/debug-users', '_blank')}>
+              View Users
+            </Button>
+            <Button variant="outlined" color="error" onClick={handleLogout}>Logout</Button>
+          </Box>
         </Box>
+        
+        {/* Sound Settings */}
         <Accordion expanded={expanded === 'group'} onChange={handleAccordionChange('group')} sx={{ mb: 2 }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography>Group Info</Typography></AccordionSummary>
           <AccordionDetails>
@@ -360,6 +474,17 @@ function AdminPanel() {
                     required
                     error={groupFormTouched.baseAmount && !groupForm.baseAmount}
                     helperText={groupFormTouched.baseAmount && !groupForm.baseAmount ? 'Required' : ''}
+                  />
+                  <TextField
+                    label="Admin Email (From Email)"
+                    type="email"
+                    value={groupForm.email}
+                    onChange={e => setGroupForm(f => ({ ...f, email: e.target.value }))}
+                    onBlur={() => setGroupFormTouched(t => ({ ...t, email: true }))}
+                    required
+                    error={groupFormTouched.email && !isValidEmail(groupForm.email)}
+                    helperText={groupFormTouched.email && !isValidEmail(groupForm.email) ? 'Valid email is required' : ''}
+                    sx={{ mb: 1 }}
                   />
                   <TextField
                     label="Previous Contribution (optional)"
@@ -401,6 +526,7 @@ function AdminPanel() {
                     setGroupForm({
                       name: group.name || '',
                       baseAmount: group.baseAmount || '',
+                      email: group.email || '', // Set email for edit
                       previousContribution: group.previousContribution || '',
                       fineRules: group.fineRules || [],
                     });
@@ -418,6 +544,15 @@ function AdminPanel() {
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 400, mt: 1 }}>
                   <TextField label="Group Name" value={groupForm.name} onChange={e => setGroupForm(f => ({ ...f, name: e.target.value }))} />
                   <TextField label="Base Amount" type="number" value={groupForm.baseAmount} onChange={e => setGroupForm(f => ({ ...f, baseAmount: e.target.value }))} />
+                  <TextField
+                    label="Email"
+                    value={groupForm.email}
+                    onChange={e => setGroupForm(f => ({ ...f, email: e.target.value }))}
+                    onBlur={() => setGroupFormTouched(t => ({ ...t, email: true }))}
+                    required
+                    error={groupFormTouched.email && !isValidEmail(groupForm.email)}
+                    helperText={groupFormTouched.email && !isValidEmail(groupForm.email) ? 'Invalid email address' : ''}
+                  />
                   <TextField
                     label="Previous Contribution (optional)"
                     type="number"
@@ -444,6 +579,7 @@ function AdminPanel() {
                   await updateDoc(doc(db, 'groups', group.id), {
                     name: groupForm.name,
                     baseAmount: Number(groupForm.baseAmount),
+                    email: groupForm.email, // Update email
                     fineRules: fineRules.filter(r => r.fromDate && r.toDate && r.amount),
                     previousContribution: groupForm.previousContribution ? Number(groupForm.previousContribution) : 0,
                   });
@@ -599,6 +735,14 @@ function AdminPanel() {
             )}
           </AccordionDetails>
         </Accordion>
+        <Accordion expanded={expanded === 'email'} onChange={handleAccordionChange('email')} sx={{ mb: 2 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography>Email Settings</Typography></AccordionSummary>
+          <AccordionDetails>
+            {group && (
+              <EmailJSConfig />
+            )}
+          </AccordionDetails>
+        </Accordion>
         <Accordion expanded={expanded === 'requests'} onChange={handleAccordionChange('requests')} sx={{ mb: 2 }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography>Payment Requests</Typography></AccordionSummary>
           <AccordionDetails>
@@ -619,6 +763,7 @@ function AdminPanel() {
                             <TableCell>UPI ID</TableCell>
                             <TableCell>Screenshot</TableCell>
                             <TableCell>Status</TableCell>
+                            <TableCell>Email Status</TableCell>
                             <TableCell>Action</TableCell>
                           </TableRow>
                         </TableHead>
@@ -641,10 +786,27 @@ function AdminPanel() {
                                 <b style={{ color: req.status === 'accepted' ? 'green' : req.status === 'rejected' ? 'red' : '#888' }}>{req.status}</b>
                               </TableCell>
                               <TableCell>
+                                {emailSendingStatus[req.id] === 'sending' && (
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <CircularProgress size={16} />
+                                    <span style={{ fontSize: '12px', color: '#666' }}>Sending...</span>
+                                  </Box>
+                                )}
+                                {emailSendingStatus[req.id] === 'sent' && (
+                                  <span style={{ fontSize: '12px', color: 'green' }}>✓ Email sent</span>
+                                )}
+                                {emailSendingStatus[req.id] === 'error' && (
+                                  <span style={{ fontSize: '12px', color: 'red' }}>✗ Email failed</span>
+                                )}
+                                {!emailSendingStatus[req.id] && req.status !== 'pending' && (
+                                  <span style={{ fontSize: '12px', color: '#666' }}>-</span>
+                                )}
+                              </TableCell>
+                              <TableCell>
                                 {req.status === 'pending' && (
                                   <>
                                     <Button size="small" color="success" variant="contained" sx={{ mr: 1 }} onClick={() => handlePaymentAction(req.id, 'accepted')}>Accept</Button>
-                                    <Button size="small" color="error" variant="outlined" onClick={() => handlePaymentAction(req.id, 'rejected')}>Reject</Button>
+                                    <Button size="small" color="error" variant="outlined" onClick={() => handleRejectWithReason(req.id)}>Reject</Button>
                                   </>
                                 )}
                               </TableCell>
@@ -659,6 +821,24 @@ function AdminPanel() {
             )}
           </AccordionDetails>
         </Accordion>
+        <Dialog open={rejectionDialogOpen} onClose={() => setRejectionDialogOpen(false)}>
+          <DialogTitle>Reject Payment Request</DialogTitle>
+          <DialogContent>
+            <TextField
+              label="Rejection Reason (optional)"
+              value={rejectionReason}
+              onChange={e => setRejectionReason(e.target.value)}
+              fullWidth
+              multiline
+              rows={2}
+              sx={{ mb: 2 }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button variant="contained" onClick={handleConfirmRejection}>Reject</Button>
+            <Button variant="outlined" onClick={() => setRejectionDialogOpen(false)}>Cancel</Button>
+          </DialogActions>
+        </Dialog>
         <Dialog open={!!editingMember} onClose={() => setEditingMember(null)}>
           <DialogTitle>Edit Member</DialogTitle>
           <DialogContent>

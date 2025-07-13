@@ -77,4 +77,44 @@ self.addEventListener('message', (event) => {
   }
 });
 
+// Handle push notifications
+self.addEventListener('push', (event) => {
+  if (event.data) {
+    const data = event.data.json();
+    const options = {
+      body: data.message,
+      icon: '/logo192.png',
+      badge: '/logo192.png',
+      tag: 'payment-notification',
+      requireInteraction: false,
+      silent: false,
+      data: data
+    };
+
+    event.waitUntil(
+      self.registration.showNotification(data.title, options)
+    );
+  }
+});
+
+// Handle notification clicks
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  
+  event.waitUntil(
+    (self as any).clients.matchAll({ type: 'window' }).then((clientList: any[]) => {
+      // If a window is already open, focus it
+      for (const client of clientList) {
+        if (client.url === self.location.origin && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      // If no window is open, open a new one
+      if ((self as any).clients.openWindow) {
+        return (self as any).clients.openWindow(self.location.origin);
+      }
+    })
+  );
+});
+
 // Any other custom service worker logic can go here.

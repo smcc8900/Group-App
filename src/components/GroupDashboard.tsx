@@ -1,16 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { Container, Typography, Card, CardContent, Box, Paper, CircularProgress, Button } from '@mui/material';
+import React, { useState, useEffect } from 'react';
+import { Box, Container, Typography, Card, CardContent, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Button } from '@mui/material';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import Table from '@mui/material/Table';
-import TableBody from '@mui/material/TableBody';
-import TableCell from '@mui/material/TableCell';
-import TableContainer from '@mui/material/TableContainer';
-import TableHead from '@mui/material/TableHead';
-import TableRow from '@mui/material/TableRow';
-import Chip from '@mui/material/Chip';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
-import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
 import { getCurrentMonth } from '../utils/contributions';
+import { getContributionAmountForToday } from '../utils/contributions';
 import { useNavigate } from 'react-router-dom';
 import Backdrop from '@mui/material/Backdrop';
 import { PulseLoader } from 'react-spinners';
@@ -47,13 +41,15 @@ function GroupDashboard() {
         const contribSnap = await getDocs(query(collection(db, 'contribution'), where('status', '==', 'paid')));
         const contributions = contribSnap.docs.map(doc => doc.data());
         console.log('All paid contributions:', contributions);
-        // Calculate member-wise totals
+        // Calculate member-wise totals with fine rules
         const memberTotals: Record<string, number> = {};
         contributions.forEach(c => {
           // Use username instead of userEmail for consistency
           const key = c.username || c.userEmail;
           if (!memberTotals[key]) memberTotals[key] = 0;
-          memberTotals[key] += Number(c.amount);
+          // Use the calculated amount with fine rules instead of stored amount
+          const calculatedAmount = getContributionAmountForToday();
+          memberTotals[key] += calculatedAmount;
         });
         
         // Map to member names for pie chart
@@ -66,18 +62,21 @@ function GroupDashboard() {
         console.log('Member pie data:', memberPie);
         console.log('Total contributions found:', contributions.length);
         setMemberData(memberPie);
-        // Calculate monthly totals for bar chart
+        // Calculate monthly totals for bar chart with fine rules
         const monthTotals: Record<string, number> = {};
         contributions.forEach(c => {
           if (!monthTotals[c.month]) monthTotals[c.month] = 0;
-          monthTotals[c.month] += Number(c.amount);
+          // Use the calculated amount with fine rules instead of stored amount
+          const calculatedAmount = getContributionAmountForToday();
+          monthTotals[c.month] += calculatedAmount;
         });
         const monthlyArr = Object.entries(monthTotals).map(([month, total]) => ({ month, total }));
         // Sort months (optional, by date string)
         monthlyArr.sort((a, b) => a.month.localeCompare(b.month));
         setMonthlyData(monthlyArr);
-        // Calculate total
-        const totalPaid = contributions.reduce((sum, c) => sum + Number(c.amount), 0);
+        // Calculate total with fine rules
+        const calculatedAmount = getContributionAmountForToday();
+        const totalPaid = contributions.length * calculatedAmount; // Each contribution should include fines
         setTotal(totalPaid + prev);
 
         // Fetch all members
@@ -90,11 +89,12 @@ function GroupDashboard() {
         // Map member to their paid status and amount for current month
         const memberList = membersAll.map(m => {
           const c = contribsAll.find(c => c.username === m.username);
+          const calculatedAmount = getContributionAmountForToday();
           return {
             name: m.name,
             username: m.username,
             paid: c?.status === 'paid',
-            amount: c?.amount || 0,
+            amount: calculatedAmount, // Use calculated amount with fine rules
           };
         });
         setMemberList(memberList);
@@ -130,6 +130,9 @@ function GroupDashboard() {
                 <Typography variant="h6">Total Contributions</Typography>
                 <Typography variant="h4" sx={{ fontWeight: 700 }}>₹{total.toLocaleString()}</Typography>
                 <Typography variant="body2">Including previous: ₹{previousContribution.toLocaleString()}</Typography>
+                <Typography variant="body2" sx={{ mt: 1 }}>
+                  Per member: ₹{getContributionAmountForToday()} (includes fines)
+                </Typography>
               </CardContent>
             </Card>
           </Box>
@@ -146,7 +149,7 @@ function GroupDashboard() {
               </ResponsiveContainer>
             </Paper>
             <Paper sx={{ p: 3, boxShadow: 4, flex: '1 1 300px', minWidth: 280 }}>
-              <Typography variant="h6" gutterBottom>Member Contribution Share</Typography>
+              <Typography variant="h6" gutterBottom>Group Contribution Distribution</Typography>
               {memberData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
@@ -193,6 +196,7 @@ function GroupDashboard() {
                 <TableHead>
                   <TableRow>
                     <TableCell>Name</TableCell>
+                    <TableCell>Amount</TableCell>
                     <TableCell>Status</TableCell>
                   </TableRow>
                 </TableHead>
@@ -200,6 +204,7 @@ function GroupDashboard() {
                   {memberList.map((m, idx) => (
                     <TableRow key={m.username || idx}>
                       <TableCell>{m.name}</TableCell>
+                      <TableCell>₹{m.amount}</TableCell>
                       <TableCell>
                         {m.paid ? (
                           <Chip label="Paid" color="success" size="small" />

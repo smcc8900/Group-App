@@ -5,10 +5,12 @@ import ReceiptIcon from '@mui/icons-material/Receipt';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, getDocs } from 'firebase/firestore';
 import { QRCodeSVG } from 'qrcode.react';
-import { fetchAndStorePaymentSettings, getStoredPaymentSettings, PaymentSettings, getStoredGroupInfo } from '../utils/paymentSettings';
+import { fetchAndStorePaymentSettings, getStoredPaymentSettings, PaymentSettings, getStoredGroupInfo, fetchAndStoreGroupInfo } from '../utils/paymentSettings';
 import {
   getCurrentMonth,
   getContributionAmountForToday,
+  getContributionBreakdown,
+  getAllFineRules,
   getTimeLeft,
   getTimeLeftToNextMonth,
   getUpiQrString
@@ -19,6 +21,8 @@ import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import Backdrop from '@mui/material/Backdrop';
 import { PulseLoader } from 'react-spinners';
+import NotificationCenter from './NotificationCenter';
+import { createPaymentSubmissionNotification } from '../utils/notifications';
 
 interface Contribution {
   id: string;
@@ -27,6 +31,12 @@ interface Contribution {
   status: string; // 'paid' | 'pending'
   dueDate?: string;
   paidDate?: string; // Added for paidDate
+}
+
+interface FineRule {
+  fromDate: string;
+  toDate: string;
+  amount: string;
 }
 
 function MyContributions() {
@@ -42,7 +52,6 @@ function MyContributions() {
   const [paymentSuccess, setPaymentSuccess] = useState('');
   const [pendingPayment, setPendingPayment] = useState<any | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<'none' | 'pending' | 'accepted' | 'rejected'>('none');
-  const [statusAlert, setStatusAlert] = useState<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -83,9 +92,13 @@ function MyContributions() {
   const currentMonth = getCurrentMonth();
   const thisMonth = contributions.find(c => c.month === currentMonth);
   const groupInfo = getStoredGroupInfo();
-  const defaultAmount = getContributionAmountForToday();
-  const paymentLink = 'upi://pay?pa=your-upi-id@bank&pn=GroupContribution&am=' + (thisMonth?.amount || defaultAmount);
+  const calculatedAmount = getContributionAmountForToday(); // This includes fine rules
+  const paymentLink = 'upi://pay?pa=your-upi-id@bank&pn=GroupContribution&am=' + calculatedAmount;
   const upcoming = contributions.filter(c => c.status === 'pending' && c.month > currentMonth);
+
+  // Debug: Get contribution breakdown
+  const contributionBreakdown = getContributionBreakdown();
+  const allFineRules = getAllFineRules();
 
   // Exclude current month from all payments
   const allPayments = contributions.filter(c => c.month !== currentMonth);
@@ -94,7 +107,7 @@ function MyContributions() {
   const previousPending = contributions.filter(c => c.status === 'pending' && c.month < currentMonth);
   const currentPending = thisMonth && thisMonth.status === 'pending' ? [thisMonth] : [];
   const allPending = [...previousPending, ...currentPending];
-  const totalDue = allPending.reduce((sum, c) => sum + (c.amount || 0), 0) || (thisMonth && thisMonth.status === 'pending' ? defaultAmount : 0);
+  const totalDue = allPending.reduce((sum, c) => sum + (c.amount || 0), 0) || (thisMonth && thisMonth.status === 'pending' ? calculatedAmount : 0);
 
   // Get payment settings from localStorage
   const paymentSettings: PaymentSettings | null = getStoredPaymentSettings();
@@ -127,17 +140,6 @@ function MyContributions() {
     return () => { if (unsub) unsub(); };
   }, [username, currentMonth, paymentSettings]);
 
-  // Show notification when payment is accepted or rejected
-  useEffect(() => {
-    if (paymentStatus === 'accepted') {
-      setStatusAlert('Your payment has been approved!');
-    } else if (paymentStatus === 'rejected') {
-      setStatusAlert('Your payment was rejected. Please try again.');
-    } else {
-      setStatusAlert(null);
-    }
-  }, [paymentStatus]);
-
   // Payment submit handler
   const handlePaymentSubmit = async () => {
     setPaymentError('');
@@ -163,13 +165,27 @@ function MyContributions() {
         await addDoc(collection(db, 'payment_requests'), {
           username: username,
           month: currentMonth,
-          amount: thisMonth?.amount ?? defaultAmount,
+          amount: calculatedAmount, // Use calculated amount with fine rules
           upiId: paymentSettings?.upiId,
           screenshot: base64,
           status: 'pending',
           createdAt: new Date().toISOString(),
           paymentID,
         });
+
+        // Send notification to admin about new payment submission
+        try {
+          await createPaymentSubmissionNotification(
+            'admin', // admin userId
+            username,
+            paymentID,
+            currentMonth,
+            calculatedAmount // Use calculated amount with fine rules
+          );
+        } catch (error) {
+          console.error('Error sending payment submission notification:', error);
+        }
+
         setPaymentSuccess('Payment submitted for admin review!');
         setPayDialogOpen(false);
         setPaymentScreenshot(null);
@@ -234,7 +250,7 @@ function MyContributions() {
 
   const handleDownloadReceipt = async () => {
     if (!username) return;
-    let amount = thisMonth?.amount ?? defaultAmount;
+    let amount = calculatedAmount; // Use calculated amount with fine rules
     let status = thisMonth?.status ?? (paymentStatus === 'accepted' ? 'paid' : 'pending');
     let paidDate = thisMonth?.paidDate || (paymentStatus === 'accepted' ? new Date().toLocaleDateString() : '-');
     let paymentID = receiptPaymentID;
@@ -275,13 +291,103 @@ function MyContributions() {
       <Container maxWidth="md" sx={{ px: { xs: 0.5, sm: 2 } }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h4" gutterBottom>My Contributions</Typography>
-          <Button variant="outlined" color="error" onClick={handleLogout}>Logout</Button>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <NotificationCenter userId={username} username={username} />
+            <Button variant="outlined" color="error" onClick={handleLogout}>Logout</Button>
+          </Box>
         </Box>
         {location.pathname.includes('group-dashboard') && (
           <Button variant="outlined" color="primary" sx={{ mb: 2 }} onClick={() => navigate('/my-contributions')}>
             Back to Home
           </Button>
         )}
+        
+        {/* Debug Section - Fine Rules Only */}
+        <Card sx={{ mb: 3, boxShadow: 4, border: '2px solid #ff9800', backgroundColor: '#fff3e0' }}>
+          <CardContent>
+            <Typography variant="h6" color="warning.main" gutterBottom>
+              🐛 Fine Rules Debug
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <strong>Base Amount:</strong> ₹{groupInfo?.group?.baseAmount || 'Not set'}
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <strong>Fine Rules:</strong> {allFineRules.length} rules
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <strong>Calculated Amount:</strong> ₹{calculatedAmount}
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <strong>Breakdown:</strong> Base ₹{contributionBreakdown.baseAmount} + Fine ₹{contributionBreakdown.fineAmount} = ₹{contributionBreakdown.totalAmount}
+            </Typography>
+            {allFineRules.length > 0 && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>Fine Rules Details:</Typography>
+                {allFineRules.map((rule: FineRule, idx: number) => (
+                  <Typography key={idx} variant="body2" sx={{ ml: 2, mb: 0.5 }}>
+                    Rule {idx + 1}: {rule.fromDate} to {rule.toDate} = ₹{rule.amount}
+                  </Typography>
+                ))}
+              </Box>
+            )}
+            <Button 
+              variant="outlined" 
+              size="small" 
+              onClick={async () => {
+                try {
+                  await fetchAndStoreGroupInfo();
+                  window.location.reload();
+                } catch (error) {
+                  console.error('Error refreshing group info:', error);
+                }
+              }}
+              sx={{ mt: 1, mr: 1 }}
+            >
+              🔄 Refresh Group Info
+            </Button>
+            <Button 
+              variant="outlined" 
+              size="small" 
+              color="info"
+              onClick={() => {
+                // Safe debug - only show fine rules data, no sensitive info
+                const groupInfo = getStoredGroupInfo();
+                const today = new Date();
+                console.log('=== FINE RULES DEBUG (SAFE) ===');
+                console.log('Today:', today.toISOString());
+                console.log('Base Amount:', groupInfo?.group?.baseAmount);
+                console.log('Fine Rules Count:', groupInfo?.group?.fineRules?.length || 0);
+                
+                if (groupInfo?.group?.fineRules) {
+                  groupInfo.group.fineRules.forEach((rule: FineRule, idx: number) => {
+                    const fromDate = new Date(rule.fromDate);
+                    const toDate = new Date(rule.toDate);
+                    const currentYear = today.getFullYear();
+                    const ruleFromDate = new Date(currentYear, fromDate.getMonth(), fromDate.getDate());
+                    const ruleToDate = new Date(currentYear, toDate.getMonth(), toDate.getDate());
+                    const todayDateOnly = new Date(currentYear, today.getMonth(), today.getDate());
+                    
+                    console.log(`Rule ${idx + 1}:`, {
+                      fromDate: rule.fromDate,
+                      toDate: rule.toDate,
+                      amount: rule.amount,
+                      ruleFromDate: ruleFromDate.toISOString(),
+                      ruleToDate: ruleToDate.toISOString(),
+                      todayDateOnly: todayDateOnly.toISOString(),
+                      isInRange: todayDateOnly >= ruleFromDate && todayDateOnly <= ruleToDate
+                    });
+                  });
+                }
+                console.log('Calculated Amount:', getContributionAmountForToday());
+                console.log('=== END DEBUG ===');
+              }}
+              sx={{ mt: 1 }}
+            >
+              🧪 Debug Fine Rules
+            </Button>
+          </CardContent>
+        </Card>
+        
         {/* Tab Menu */}
         <Tabs
           value={location.pathname === '/group-dashboard' ? 1 : 0}
@@ -349,9 +455,9 @@ function MyContributions() {
                     <>
                       <Typography>
                         {thisMonth.status === 'paid' ? (
-                          <span style={{ color: 'green' }}>Amount paid: <b>₹{thisMonth.amount ?? defaultAmount}</b></span>
+                          <span style={{ color: 'green' }}>Amount paid: <b>₹{calculatedAmount}</b></span>
                         ) : (
-                          <span style={{ color: 'red' }}>Amount to be paid: <b>₹{thisMonth.amount ?? defaultAmount}</b></span>
+                          <span style={{ color: 'red' }}>Amount to be paid: <b>₹{calculatedAmount}</b></span>
                         )}
                       </Typography>
                       <Typography>
@@ -363,12 +469,12 @@ function MyContributions() {
                   ) : (
                     paymentStatus === 'accepted' ? (
                       <Typography>
-                        <span style={{ color: 'green' }}>Amount paid: <b>₹{defaultAmount}</b></span>
+                        <span style={{ color: 'green' }}>Amount paid: <b>₹{calculatedAmount}</b></span>
                       </Typography>
                     ) : (
                       <Typography>
                         No contribution record for this month.<br/>
-                        <span style={{ color: 'red' }}>Amount to be paid: <b>₹{defaultAmount}</b></span>
+                        <span style={{ color: 'red' }}>Amount to be paid: <b>₹{calculatedAmount}</b></span>
                       </Typography>
                     )
                   )}
@@ -479,9 +585,6 @@ function MyContributions() {
           </>
         )}
         {error && <Alert severity="error">{error}</Alert>}
-        {statusAlert && (
-          <Alert severity={paymentStatus === 'accepted' ? 'success' : 'error'} sx={{ mt: 2 }}>{statusAlert}</Alert>
-        )}
         <Box sx={{ mt: 6, textAlign: 'center', color: '#888' }}>
           <Typography variant="body2">Made by Team OwnFactory 💙</Typography>
         </Box>
@@ -495,7 +598,7 @@ function MyContributions() {
               <Typography variant="subtitle1" sx={{ mb: 2 }}>
                 Scan this QR code with your UPI app to pay
               </Typography>
-              <QRCodeSVG value={getUpiQrString(paymentSettings.upiId, thisMonth?.amount ?? defaultAmount)} size={200} />
+              <QRCodeSVG value={getUpiQrString(paymentSettings.upiId, calculatedAmount)} size={200} />
               <Box sx={{ mt: 3 }}>
                 <Typography variant="subtitle2" sx={{ mb: 1 }}>Upload Payment Screenshot (required)</Typography>
                 <Box sx={{ 
